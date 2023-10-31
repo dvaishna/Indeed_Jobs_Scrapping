@@ -136,8 +136,7 @@ def get_job_details(driver, job_element):
                     job_exp = None
             else:
                 # Use regular expressions to search for the experience requirement pattern
-                # experience_pattern = re.compile(r'(\d+(?:[-+]?\d*)?)\s*(?:year|years)\s*(?:of\s*)?(?:.*\bexperience\b)?', re.IGNORECASE)
-                experience_pattern = re.compile(r'(\d+)\s*(?:year|years)?\s*(?:of)\s+.*?\bexperience\b', re.IGNORECASE)
+                experience_pattern = re.compile(r'(\d+\s?(?:-\s?\d+)?\s?(?:years?|y(?:ea)?r\'?s?)\s?(?:of)?)\s?(?:experience)?', re.IGNORECASE)
 
                 # Search for the pattern within the job description text
                 experience_matches = experience_pattern.findall(job_description_element)
