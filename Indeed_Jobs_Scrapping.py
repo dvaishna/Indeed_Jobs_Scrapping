@@ -15,13 +15,13 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver import Keys, ActionChains
 from selenium.webdriver.common.keys import Keys
-from webdriver_manager.chrome import ChromeDriverManager
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+import threading
 
-import csv
-import getpass
-import logging
-import os
-from selenium.webdriver.support import ui
+
 
 # Initialize empty lists for each filter
 job_titles = []
@@ -30,24 +30,27 @@ job_locations = []
 dates = []
 salary_list = []
 job_data = []
-job_descr = []
 job_others = []
 job_experience = []
 
+
 filter_list = [
-    {"Job": "Project Management", "Location": "California"},
-    {"Job": "Business Analyst", "Location": "California"},
-    {"Job": "Business Analyst", "Location": "New York"},
-    {"Job": "Data Scientist", "Location": "New York"},
-    {"Job": "Project Management", "Location": "New York"},
-    {"Job": "Business Analyst", "Location": "New York"},
-    # {"Job": "chief technology officer", "Location": "California"}
+    # {"Job": "Project Management", "Location": "California"},
+    # {"Job": "Business Analyst", "Location": "California"},
+    # {"Job": "Business Analyst", "Location": "New York"},
+    #{"Job": "Data Scientist", "Location": "New York"}
+     {"Job": "Project Management", "Location": "New York"},
+     {"Job": "Business Analyst", "Location": "New York"}
+    #{"Job": "chief technology officer", "Location": "California"}
+    # {"Job": "chief operating officer", "Location": "California"},
+     # {"Job": "chief technology officer", "Location": "California"}
 ]
+
 
 # Use this Url and change city or role accordingly
 def site_launch(accept_cookie):
     service = Service(
-        executable_path=r'C:\Users\dvaishn2\Downloads\chromedriver-win64\chromedriver-win64\chromedriver.exe')
+        executable_path=r'C:\Users\Public\WebDriver\chromedriver-win64\chromedriver.exe')
     options = webdriver.ChromeOptions()
     web_driver = webdriver.Chrome(service=service, options=options)
     web_driver.get("https://www.indeed.com/")
@@ -57,22 +60,24 @@ def site_launch(accept_cookie):
     # Accept cookies if required
     if accept_cookie:
         try:
-            verify_human_label = web_driver.find_element(By.XPATH, "//span[text()='Verify you are human']")
-            time.sleep(randint(2, 4))
+            verify_human_label = WebDriverWait(web_driver, 10).until(
+                EC.element_to_be_clickable((By.XPATH, "//span[text()='Verify you are human']")))
+
             verify_human_label.click()
         except Exception as e:
             print("Error clicking 'Verify you are human' label:", str(e))
 
     return web_driver
 
-def job_search(web_driver, skill_txt, place_txt):
+
+def job_search(web_driver: object, skill_txt: object, place_txt: object) -> object:
     # Find the skill and location input fields and populate them
     skill_element = web_driver.find_element(By.ID, "text-input-what")
     skill_element.click()
     time.sleep(1)
     skill_element.send_keys(Keys.CONTROL + "a" + Keys.DELETE);
 
-    driver.execute_script("arguments[0].value = '';", skill_element)
+    web_driver.execute_script("arguments[0].value = '';", skill_element)
     skill_element.send_keys(skill_txt)
     time.sleep(1)
 
@@ -81,16 +86,79 @@ def job_search(web_driver, skill_txt, place_txt):
     time.sleep(1)
     place_element.send_keys(Keys.CONTROL + "a" + Keys.DELETE);
 
-    driver.execute_script("arguments[0].value = '';", place_element)
+    web_driver.execute_script("arguments[0].value = '';", place_element)
     place_element.send_keys(place_txt)
     time.sleep(1)
 
-    search_button = driver.find_element(By.CLASS_NAME, 'yosegi-InlineWhatWhere-primaryButton')
+    search_button = web_driver.find_element(By.CLASS_NAME, 'yosegi-InlineWhatWhere-primaryButton')
     search_button.click()
     time.sleep(1)
 
-def jobs(job_titles, job_companies, job_locations, dates, salary_list, job_others, job_experience, job_descr):
 
+# Define a function to get job type and description when clicking the job title
+def get_job_details(driver, job_element):
+    job_exp = None
+    job_type = None
+    try:
+        job_title = job_element.find_element(By.CLASS_NAME, "jobTitle")
+        # Scroll into view of the job title element
+        driver.execute_script("arguments[0].scrollIntoView(true);", job_title)
+        time.sleep(1)
+
+        # Click the job title
+        job_title.click()
+        time.sleep(randint(1, 2))
+
+
+        # Find a job type element
+        job_info_element = driver.find_element(By.ID, "salaryInfoAndJobType")
+        job_type_element = job_info_element.find_element(By.CLASS_NAME, "css-k5flys")
+        job_type = job_type_element.text.lstrip('=-')if job_type_element else "None"
+
+
+        # Find an experience from job description
+        job_description_element = driver.find_element(By.ID, "jobDescriptionText").text
+        experience_paragraph = None
+        try:
+            experience_paragraph = driver.find_element(By.XPATH, "//p[contains(text(), 'Experience:')]")
+        except NoSuchElementException:
+            pass
+
+            # Check if there's an element with "Experience:" <p> tag
+            if experience_paragraph:
+                # Find the first list item (li) element within the ul
+                experience_label = driver.find_element(By.XPATH, "//p[contains(text(), 'Experience:')]")
+                first_list_item = experience_label.find_element(By.XPATH, "following-sibling::ul/li[1]").text
+
+                if first_list_item:
+                    job_exp = first_list_item.strip()
+                else:
+                    job_exp = None
+            else:
+                # Use regular expressions to search for the experience requirement pattern
+                # experience_pattern = re.compile(r'(\d+(?:[-+]?\d*)?)\s*(?:year|years)\s*(?:of\s*)?(?:.*\bexperience\b)?', re.IGNORECASE)
+                experience_pattern = re.compile(r'(\d+)\s*(?:year|years)?\s*(?:of)\s+.*?\bexperience\b', re.IGNORECASE)
+
+                # Search for the pattern within the job description text
+                experience_matches = experience_pattern.findall(job_description_element)
+
+                if experience_matches:
+                    # Fetch the first value that matches the pattern
+                    first_experience_value = experience_matches[0]
+                    job_exp = first_experience_value
+                else:
+                    job_exp = None
+
+
+
+    except NoSuchElementException:
+        job_exp = None
+        job_type = None
+
+    return job_exp, job_type
+
+
+def jobs(driver, filtered_job, job_titles, job_companies, job_locations, dates, salary_list, job_experience, job_others):
     while True:
         time.sleep(randint(2, 4))
 
@@ -98,15 +166,22 @@ def jobs(job_titles, job_companies, job_locations, dates, salary_list, job_other
         jobs = job_page.find_elements(By.CLASS_NAME, "job_seen_beacon")
 
         for jj in jobs:
-            job_titles.append(jj.find_element(By.CLASS_NAME, "jobTitle").text)
+            # try:
+            #     job_titles.append(jj.find_element(By.CSS_SELECTOR, 'h2.jobTitle span').text)
+            # except NoSuchElementException:
+            #     job_titles.append(None)
+
+            job_titles.append(filtered_job) #DV
 
             # Find the element with class "company_location"
             company_location_element = jj.find_element(By.CLASS_NAME, "company_location")
             # Find the company name element within the company_location element
-            job_companies.append(company_location_element.find_element(By.CSS_SELECTOR, 'span[data-testid="company-name"]').text)
+            job_companies.append(
+                company_location_element.find_element(By.CSS_SELECTOR, 'span[data-testid="company-name"]').text)
 
             # Find the location element within the company_location element
-            job_locations.append(company_location_element.find_element(By.CSS_SELECTOR, 'div[data-testid="text-location"]').text)
+            job_locations.append(
+                company_location_element.find_element(By.CSS_SELECTOR, 'div[data-testid="text-location"]').text)
 
             dates.append(jj.find_element(By.CLASS_NAME, "date").text)
 
@@ -118,70 +193,14 @@ def jobs(job_titles, job_companies, job_locations, dates, salary_list, job_other
                 except NoSuchElementException:
                     salary_list.append(None)
 
-            # 10/25, Wednesday
-            try:
-                # Find the element with class "metadataContainer" using a CSS selector
-                metadata_container = jj.find_element(By.CSS_SELECTOR, ".metadataContainer")
-
-                # Find all child elements with class "metadata" within metadata_container
-                metadata_elements = metadata_container.find_elements(By.CLASS_NAME, "metadata")
-
-                # Extract and concatenate the text content using a list comprehension
-                concatenated_values = "@".join(element.text for element in metadata_elements)
-
-                # Append the concatenated values to the job_others list
-                job_others.append(concatenated_values)
-            except NoSuchElementException:
-                job_others.append(None)
-
-            try:
-                # Find the job description element
-                tile_ele = jj.find_element(By.CLASS_NAME, "jobTitle")
-                tile_ele.click()
-
-                time.sleep(randint(2, 4))
-
-                job_description_element = driver.find_element(By.ID, "jobDescriptionText").text
-
-                experience_paragraph = None
-                try:
-                    experience_paragraph = driver.find_element(By.XPATH, "//p[contains(text(), 'Experience:')]")
-                except NoSuchElementException:
-                    pass
-
-                # Check if there's an element with "Experience:" <p> tag
-                if experience_paragraph:
-                    # Find the first list item (li) element within the ul
-                    experience_label = driver.find_element(By.XPATH, "//p[contains(text(), 'Experience:')]")
-                    first_list_item = experience_label.find_element(By.XPATH, "following-sibling::ul/li[1]").text
-
-                    if first_list_item:
-                        job_experience.append(first_list_item.strip())
-                    else:
-                        job_experience.append(None)
-                else:
-                    pattern = r'(\d+\s?(?:-\s?\d+)?\s?(?:years?|y(?:ea)?r\'?s?)\s?(?:of)?)\s?(?:experience)?'
-                    # Use regular expressions to search for the experience requirement pattern
-                    experience_pattern = re.compile(pattern, re.IGNORECASE)
-
-                    # Search for the pattern within the job description text
-                    experience_matches = experience_pattern.findall(job_description_element)
-
-                    if experience_matches:
-                        # Fetch the first value that matches the pattern
-                        first_experience_value = experience_matches[0]
-                        job_experience.append(first_experience_value)
-                    else:
-                        job_experience.append(None)
-
-                # Go back to the original page
-                driver.back()
-
-            except NoSuchElementException:
-                job_experience.append(None)
+            job_exp, job_type = get_job_details(driver, jj)
+            job_experience.append(job_exp)
+            job_others.append(job_type)
+            # Go back to the original page
+            driver.back()
 
             # Add a random delay to avoid being blocked
-            time.sleep(randint(2, 4))
+            time.sleep(randint(1, 3))
 
         # Scroll down to trigger loading of more job listings
         actions = ActionChains(driver)
@@ -204,44 +223,39 @@ def jobs(job_titles, job_companies, job_locations, dates, salary_list, job_other
             break
 
 
-cookie = True
-driver = site_launch(accept_cookie=cookie)
-
-# # Iterate through the filter_dict and perform job searches
-# for filter_key, filter_value in filter_dict.items():
-#     job_search(driver, filter_key, filter_value)
-#     jobs(job_titles, job_companies, job_locations, dates, salary_list)
-
-# Iterate through the filter_list and perform job searches
-for filter_dict in filter_list:
+# Function for multithreading
+def scrape_jobs_for_filter(filter_dict):
+    driver = site_launch(accept_cookie=True)
     job_search(driver, filter_dict["Job"], filter_dict["Location"])
-    # time.sleep(50000)
-    jobs(job_titles, job_companies, job_locations, dates, salary_list, job_others, job_experience, job_descr)
+    jobs(driver, filter_dict["Job"], job_titles, job_companies, job_locations, dates, salary_list, job_experience, job_others)
+    driver.quit()
 
+# Create a list to hold thread objects
+threads = []
+
+# Start a thread for each filter
+for filter_dict in filter_list:
+    thread = threading.Thread(target=scrape_jobs_for_filter, args=(filter_dict,))
+    threads.append(thread)
+    thread.start()
+
+# Wait for all threads to complete
+for thread in threads:
+    thread.join()
 
 # Create DataFrames from the lists
-title_df = pd.DataFrame(job_titles, columns=["Job"])
+title_df = pd.DataFrame(job_titles, columns=["Job Title"])
 company_df = pd.DataFrame(job_companies, columns=["Company"])
 location_df = pd.DataFrame(job_locations, columns=["Location"])
 date_df = pd.DataFrame(dates, columns=["Date"])
 salary_df = pd.DataFrame(salary_list, columns=["Salary"])
-others_df = pd.DataFrame(job_others, columns=["Other Details"])
 job_experience_df = pd.DataFrame(job_experience, columns=["Experience (Years)"])
-job_descr_df = pd.DataFrame(job_descr, columns=["Job Description"])
+others_df = pd.DataFrame(job_others, columns=["Job Type"])
 
 # Concatenate DataFrames horizontally
-result_df = pd.concat([title_df, company_df, location_df, date_df, salary_df, others_df, job_experience_df, job_descr_df], axis=1)
+result_df = pd.concat(
+    [title_df, company_df, location_df, date_df, salary_df, job_experience_df, others_df], axis=1)
+
 
 # Save to CSV file
-result_df.to_csv('indeed_jobs.csv', index=True)
-
-# Quit the web driver
-driver.quit()
-
-
-
-
-
-
-
-
+result_df.to_csv('indeedJobs.csv', index=False)
