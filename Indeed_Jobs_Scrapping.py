@@ -35,15 +35,14 @@ job_experience = []
 
 
 filter_list = [
-    # {"Job": "Project Management", "Location": "California"},
-    # {"Job": "Business Analyst", "Location": "California"},
+    {"Job": "Project Management", "Location": "California"},
+    {"Job": "Business Analyst", "Location": "California"},
     # {"Job": "Business Analyst", "Location": "New York"},
-    #{"Job": "Data Scientist", "Location": "New York"}
-     {"Job": "Project Management", "Location": "New York"},
-     {"Job": "Business Analyst", "Location": "New York"}
-    #{"Job": "chief technology officer", "Location": "California"}
-    # {"Job": "chief operating officer", "Location": "California"},
-     # {"Job": "chief technology officer", "Location": "California"}
+    # {"Job": "Data Scientist", "Location": "New York"},
+    {"Job": "Project Management", "Location": "New York"},
+    # {"Job": "Data Analyst", "Location": "New York"},
+    #{"Job": "chief technology officer", "Location": "California"},
+    # {"Job": "chief operating officer", "Location": "California"}
 ]
 
 
@@ -94,9 +93,24 @@ def job_search(web_driver: object, skill_txt: object, place_txt: object) -> obje
     search_button.click()
     time.sleep(1)
 
+# Define a function to extract the salary pattern from the job description
+def extract_salary_pattern(job_description):
+    # Use a regular expression to search for the pattern "$123,000-$567,700"
+    salary_pattern = re.compile(r'\s*\d{1,3}(?:,\d{3})*\s*\$\s*\d{1,3}(?:,\d{3})*\s*')
+
+
+    # Search for the pattern within the job description text
+    salary_matches = salary_pattern.findall(job_description)
+
+    if salary_matches:
+        # If a salary pattern is found, return the first match
+        return salary_matches[0]
+    else:
+        return None
+
 
 # Define a function to get job type and description when clicking the job title
-def get_job_details(driver, job_element):
+def get_job_details(driver, job_element, salary_list, sal_flag):
     job_exp = None
     job_type = None
     try:
@@ -111,10 +125,15 @@ def get_job_details(driver, job_element):
 
 
         # Find a job type element
-        job_info_element = driver.find_element(By.ID, "salaryInfoAndJobType")
-        job_type_element = job_info_element.find_element(By.CLASS_NAME, "css-k5flys")
-        job_type = job_type_element.text.lstrip('=-')if job_type_element else "None"
-
+        try:
+            job_info_element = driver.find_element(By.ID, "salaryInfoAndJobType")
+            try:
+                job_type_element = job_info_element.find_element(By.CLASS_NAME, "css-k5flys")
+                job_type = job_type_element.text.lstrip('=-') if job_type_element else "None"
+            except NoSuchElementException:
+                job_type = "None"
+        except NoSuchElementException:
+            job_type = "None"
 
         # Find an experience from job description
         job_description_element = driver.find_element(By.ID, "jobDescriptionText").text
@@ -148,7 +167,10 @@ def get_job_details(driver, job_element):
                 else:
                     job_exp = None
 
-
+        # Fetch the salary hidden in job description
+        if sal_flag == 1:
+            salary_range = extract_salary_pattern(job_description_element)
+            salary_list.append(salary_range)
 
     except NoSuchElementException:
         job_exp = None
@@ -184,15 +206,18 @@ def jobs(driver, filtered_job, job_titles, job_companies, job_locations, dates, 
 
             dates.append(jj.find_element(By.CLASS_NAME, "date").text)
 
+            sal_flag= 0
             try:
                 salary_list.append(jj.find_element(By.CLASS_NAME, "salary-snippet-container").text)
             except NoSuchElementException:
                 try:
                     salary_list.append(jj.find_element(By.CLASS_NAME, "estimated-salary").text)
                 except NoSuchElementException:
-                    salary_list.append(None)
+                    sal_flag = 1
+                    #salary_list.append(None)
+                    pass
 
-            job_exp, job_type = get_job_details(driver, jj)
+            job_exp, job_type = get_job_details(driver, jj, salary_list, sal_flag)
             job_experience.append(job_exp)
             job_others.append(job_type)
             # Go back to the original page
