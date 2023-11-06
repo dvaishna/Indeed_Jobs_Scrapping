@@ -1,4 +1,4 @@
-# webscrapping using Selenium, linkedin
+# webscrapping using Selenium, Indeed
 import re
 from random import randint
 
@@ -20,6 +20,8 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 import threading
+import concurrent.futures
+from selenium.common.exceptions import StaleElementReferenceException
 
 
 
@@ -34,16 +36,11 @@ job_others = []
 job_experience = []
 
 
-filter_list = [
-    {"Job": "Project Management", "Location": "California"},
-    {"Job": "Business Analyst", "Location": "California"},
-    # {"Job": "Business Analyst", "Location": "New York"},
-    # {"Job": "Data Scientist", "Location": "New York"},
-    {"Job": "Project Management", "Location": "New York"},
-    # {"Job": "Data Analyst", "Location": "New York"},
-    #{"Job": "chief technology officer", "Location": "California"},
-    # {"Job": "chief operating officer", "Location": "California"}
-]
+# Load the Excel file and specify the sheet name
+df = pd.read_excel("input_jobs.xlsx", sheet_name="Job_Inputs", names=["Job", "Location"])
+
+# Convert the DataFrame into a list of dictionaries
+filter_list = df.to_dict(orient="records")
 
 
 # Use this Url and change city or role accordingly
@@ -53,7 +50,7 @@ def site_launch(accept_cookie):
     options = webdriver.ChromeOptions()
     web_driver = webdriver.Chrome(service=service, options=options)
     web_driver.get("https://www.indeed.com/")
-    time.sleep(5)
+    time.sleep(randint(3, 5))
     web_driver.maximize_window()
 
     # Accept cookies if required
@@ -73,38 +70,37 @@ def job_search(web_driver: object, skill_txt: object, place_txt: object) -> obje
     # Find the skill and location input fields and populate them
     skill_element = web_driver.find_element(By.ID, "text-input-what")
     skill_element.click()
-    time.sleep(1)
+    time.sleep(randint(1, 2))
     skill_element.send_keys(Keys.CONTROL + "a" + Keys.DELETE);
 
     web_driver.execute_script("arguments[0].value = '';", skill_element)
     skill_element.send_keys(skill_txt)
-    time.sleep(1)
+    time.sleep(randint(1, 2))
 
     place_element = web_driver.find_element(By.ID, "text-input-where")
     place_element.click()
-    time.sleep(1)
+    time.sleep(randint(1, 2))
     place_element.send_keys(Keys.CONTROL + "a" + Keys.DELETE);
 
     web_driver.execute_script("arguments[0].value = '';", place_element)
     place_element.send_keys(place_txt)
-    time.sleep(1)
+    time.sleep(randint(1, 2))
 
     search_button = web_driver.find_element(By.CLASS_NAME, 'yosegi-InlineWhatWhere-primaryButton')
     search_button.click()
-    time.sleep(1)
+    time.sleep(randint(1, 2))
 
 # Define a function to extract the salary pattern from the job description
 def extract_salary_pattern(job_description):
-    # Use a regular expression to search for the pattern "$123,000-$567,700"
-    salary_pattern = re.compile(r'\s*\d{1,3}(?:,\d{3})*\s*\$\s*\d{1,3}(?:,\d{3})*\s*')
+    # Regular expression to find salary patterns
+    salary_pattern = re.compile(r'(\$[0-9,]+)(?:\s*-\s*(\$[0-9,]+))?')
 
+    # Search for salary patterns in the text
+    matches = salary_pattern.findall(job_description)
 
-    # Search for the pattern within the job description text
-    salary_matches = salary_pattern.findall(job_description)
-
-    if salary_matches:
-        # If a salary pattern is found, return the first match
-        return salary_matches[0]
+    # Extract and join the first tuple
+    if matches:
+        first_range = "-".join(matches[0])
     else:
         return None
 
@@ -117,7 +113,7 @@ def get_job_details(driver, job_element, salary_list, sal_flag):
         job_title = job_element.find_element(By.CLASS_NAME, "jobTitle")
         # Scroll into view of the job title element
         driver.execute_script("arguments[0].scrollIntoView(true);", job_title)
-        time.sleep(1)
+        time.sleep(randint(1, 2))
 
         # Click the job title
         job_title.click()
@@ -132,45 +128,75 @@ def get_job_details(driver, job_element, salary_list, sal_flag):
                 job_type = job_type_element.text.lstrip('=-') if job_type_element else "None"
             except NoSuchElementException:
                 job_type = "None"
+            try:
+                if sal_flag == 1:
+                    job_salary_element = job_info_element.find_element(By.CLASS_NAME, "css-2iqe2o")
+                    job_salary = job_salary_element.text.lstrip('=-') if job_salary_element else "None"
+                    salary_list.append(job_salary)
+                    sal_flag = 0
+            except NoSuchElementException:
+                sal_flag = 1
         except NoSuchElementException:
             job_type = "None"
 
+
         # Find an experience from job description
         job_description_element = driver.find_element(By.ID, "jobDescriptionText").text
+
+        # Fetch the salary hidden in job description
+        if sal_flag == 1:
+            salary_range = extract_salary_pattern(job_description_element)
+            salary_list.append(salary_range)
+
         experience_paragraph = None
         try:
             experience_paragraph = driver.find_element(By.XPATH, "//p[contains(text(), 'Experience:')]")
         except NoSuchElementException:
             pass
 
-            # Check if there's an element with "Experience:" <p> tag
-            if experience_paragraph:
-                # Find the first list item (li) element within the ul
-                experience_label = driver.find_element(By.XPATH, "//p[contains(text(), 'Experience:')]")
-                first_list_item = experience_label.find_element(By.XPATH, "following-sibling::ul/li[1]").text
+        # Check if there's an element with "Experience:" <p> tag
+        if experience_paragraph:
+            # Find the first list item (li) element within the ul
+            experience_label = driver.find_element(By.XPATH, "//p[contains(text(), 'Experience:')]")
+            first_list_item = experience_label.find_element(By.XPATH, "following-sibling::ul/li[1]").text
 
-                if first_list_item:
-                    job_exp = first_list_item.strip()
-                else:
-                    job_exp = None
+            # Regular expression pattern to match the first number
+            pattern = r'(?<!\w)\d+(?:\.\d+)?'
+
+            # Search for the pattern in the text
+            match = re.search(pattern, first_list_item)
+
+            if match:
+                job_exp = match.group()
             else:
-                # Use regular expressions to search for the experience requirement pattern
-                experience_pattern = re.compile(r'(\d+\s?(?:-\s?\d+)?\s?(?:years?|y(?:ea)?r\'?s?)\s?(?:of)?)\s?(?:experience)?', re.IGNORECASE)
+                job_exp = None
 
-                # Search for the pattern within the job description text
-                experience_matches = experience_pattern.findall(job_description_element)
+        else:
+            # Use regular expressions to search for the experience requirement pattern
+            experience_pattern = re.compile(
+                r'(\d+\+?\s?(?:years?|y(?:ea)?r\'?s?)\s?(?:of)?)\s?(?:experience)?|(\d+\s?(?:-\s?\d+)?\s?(?:years?|y(?:ea)?r\'?s?)\s?(?:of)?)\s?(?:experience)?',
+                re.IGNORECASE)
+            # Search for the pattern within the job description text
+            experience_matches = experience_pattern.findall(job_description_element)
 
-                if experience_matches:
-                    # Fetch the first value that matches the pattern
-                    first_experience_value = experience_matches[0]
-                    job_exp = first_experience_value
-                else:
-                    job_exp = None
+            if experience_matches:
+                experience_value = None
 
-        # Fetch the salary hidden in job description
-        if sal_flag == 1:
-            salary_range = extract_salary_pattern(job_description_element)
-            salary_list.append(salary_range)
+                for match in experience_matches:
+                    for group in match:
+                        if group:
+                            experience_value = group
+                            break
+                    if experience_value:
+                        break
+
+                # If you want to remove any non-numeric characters, you can do it like this:
+                if experience_value:
+                    experience_value = re.sub(r'[^\d+-]', '', experience_value)
+                    experience_value = experience_value.replace("-","to")
+                job_exp = experience_value
+            else:
+                job_exp = None
 
     except NoSuchElementException:
         job_exp = None
@@ -187,44 +213,57 @@ def jobs(driver, filtered_job, job_titles, job_companies, job_locations, dates, 
         jobs = job_page.find_elements(By.CLASS_NAME, "job_seen_beacon")
 
         for jj in jobs:
-            # try:
-            #     job_titles.append(jj.find_element(By.CSS_SELECTOR, 'h2.jobTitle span').text)
-            # except NoSuchElementException:
-            #     job_titles.append(None)
-
-            job_titles.append(filtered_job) #DV
-
-            # Find the element with class "company_location"
-            company_location_element = jj.find_element(By.CLASS_NAME, "company_location")
-            # Find the company name element within the company_location element
-            job_companies.append(
-                company_location_element.find_element(By.CSS_SELECTOR, 'span[data-testid="company-name"]').text)
-
-            # Find the location element within the company_location element
-            job_locations.append(
-                company_location_element.find_element(By.CSS_SELECTOR, 'div[data-testid="text-location"]').text)
-
-            dates.append(jj.find_element(By.CLASS_NAME, "date").text)
-
-            sal_flag= 0
             try:
-                salary_list.append(jj.find_element(By.CLASS_NAME, "salary-snippet-container").text)
-            except NoSuchElementException:
+                job_titles.append(filtered_job)
+
+                company_location_element = None
+
+                for _ in range(3):  # Retry up to 3 times
+                    try:
+                        # Find the element with class "company_location"
+                        company_location_element = jj.find_element(By.CLASS_NAME, "company_location")
+                        break # If successful, break the retry loop
+                    except StaleElementReferenceException:
+                        continue # Retry if a stale element reference is encountered
+
+                if company_location_element:
+                    company_name_element = company_location_element.find_element(By.CSS_SELECTOR,
+                                                                                 'span[data-testid="company-name"]').text
+                    location_element = company_location_element.find_element(By.CSS_SELECTOR,
+                                                                             'div[data-testid="text-location"]').text
+                else:
+                    company_name_element = "None"
+                    location_element = "None"
+
+                date_element = jj.find_element(By.CLASS_NAME, "date").text
+
+                job_companies.append(company_name_element)
+                job_locations.append(location_element)
+                dates.append(date_element)
+
+                sal_flag = 0
                 try:
-                    salary_list.append(jj.find_element(By.CLASS_NAME, "estimated-salary").text)
+                    salary_list.append(jj.find_element(By.CLASS_NAME, "salary-snippet-container").text)
                 except NoSuchElementException:
-                    sal_flag = 1
-                    #salary_list.append(None)
-                    pass
+                    try:
+                        salary_list.append(jj.find_element(By.CLASS_NAME, "estimated-salary").text)
+                    except NoSuchElementException:
+                        sal_flag = 1
 
-            job_exp, job_type = get_job_details(driver, jj, salary_list, sal_flag)
-            job_experience.append(job_exp)
-            job_others.append(job_type)
-            # Go back to the original page
-            driver.back()
+                job_exp, job_type = get_job_details(driver, jj, salary_list, sal_flag)
+                job_experience.append(job_exp)
+                job_others.append(job_type)
 
-            # Add a random delay to avoid being blocked
-            time.sleep(randint(1, 3))
+                # Go back to the original page
+                driver.back()
+
+                # Add a random delay to avoid being blocked
+                time.sleep(randint(1, 3))
+
+            except NoSuchElementException:
+                job_companies.append("None")
+                job_locations.append("None")
+                dates.append("None")
 
         # Scroll down to trigger loading of more job listings
         actions = ActionChains(driver)
@@ -254,18 +293,16 @@ def scrape_jobs_for_filter(filter_dict):
     jobs(driver, filter_dict["Job"], job_titles, job_companies, job_locations, dates, salary_list, job_experience, job_others)
     driver.quit()
 
-# Create a list to hold thread objects
-threads = []
 
-# Start a thread for each filter
-for filter_dict in filter_list:
-    thread = threading.Thread(target=scrape_jobs_for_filter, args=(filter_dict,))
-    threads.append(thread)
-    thread.start()
+# Create a list to hold filter_dict arguments
+filter_dicts = filter_list
 
-# Wait for all threads to complete
-for thread in threads:
-    thread.join()
+# Define the maximum number of threads to run concurrently
+max_threads = 5  # Adjust this value as needed
+
+# Create a ThreadPoolExecutor
+with concurrent.futures.ThreadPoolExecutor(max_threads) as executor:
+    executor.map(scrape_jobs_for_filter, filter_dicts)
 
 # Create DataFrames from the lists
 title_df = pd.DataFrame(job_titles, columns=["Job Title"])
